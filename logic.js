@@ -142,7 +142,7 @@ export function clearDebugLog() {
   debugLog.length = 0;
 }
 
-function addLog(entry) {
+export function addLog(entry) {
   debugLog.unshift({
     timestamp: new Date().toISOString(),
     ...entry

@@ -639,6 +639,85 @@ h2 {
   margin-bottom: 12px;
 }
 
+.notification-enabled {
+  color: #2e7d32 !important;
+}
+
+.notification-denied {
+  color: #c62828 !important;
+}
+
+.btn-enable-notifications {
+  width: 100%;
+  padding: 10px 16px;
+  background: #9b59b6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-enable-notifications:hover {
+  background: #8e44ad;
+}
+
+/* In-app dose alert banner */
+.dose-alert {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+  color: white;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 2000;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.dose-alert-text {
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex: 1;
+}
+
+.dose-alert-dismiss {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  font-size: 1.5rem;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 12px;
+  transition: background 0.2s;
+}
+
+.dose-alert-dismiss:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 .settings-description {
   margin-bottom: 16px;
   font-size: 0.9rem;
@@ -814,6 +893,10 @@ h2 {
 
 .debug-parsed {
   border-left-color: #9b59b6;
+}
+
+.debug-notification {
+  border-left-color: #f39c12;
 }
 
 .debug-time {

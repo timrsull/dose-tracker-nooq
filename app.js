@@ -1,7 +1,7 @@
 // Dose Tracker - UI
-import { init, Views, Actions, calculateNextDose, formatTimeUntil, formatDateTime, extractMedicationFromImage, isMobileDevice, getDebugLog, clearDebugLog } from './logic.js';
+import { init, Views, Actions, calculateNextDose, formatTimeUntil, formatDateTime, extractMedicationFromImage, isMobileDevice, getDebugLog, clearDebugLog, addLog } from './logic.js';
 
-const APP_VERSION = '23';
+const APP_VERSION = '27';
 
 let currentProvider = 'gemini'; // Will be loaded from settings
 
@@ -12,6 +12,7 @@ let showAddForm = false;
 let isProcessingImage = false;
 let pendingImages = []; // Queue of { base64, mimeType, name } for staged upload
 let highlightedMedId = null; // ID of medication to highlight after adding
+let notifiedMedIds = new Set(); // Track which meds we've already notified about
 
 // Sort medications: on-schedule meds by next dose time, then off-schedule alphabetically
 function sortMedications() {
@@ -45,8 +46,145 @@ function sortMedications() {
   });
 }
 
+// Check if notifications are supported and enabled
+function notificationsSupported() {
+  return 'Notification' in window;
+}
+
+function notificationsEnabled() {
+  return notificationsSupported() && Notification.permission === 'granted';
+}
+
+// Request notification permission
+async function requestNotificationPermission() {
+  if (!notificationsSupported()) return false;
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') return false;
+
+  const permission = await Notification.requestPermission();
+  return permission === 'granted';
+}
+
+// Show an in-app alert banner for a due medication
+function showInAppAlert(medName, medId) {
+  // Remove any existing alert for this med
+  const existing = document.querySelector(`.dose-alert[data-med-id="${medId}"]`);
+  if (existing) existing.remove();
+
+  const alert = document.createElement('div');
+  alert.className = 'dose-alert';
+  alert.dataset.medId = medId;
+  alert.innerHTML = `
+    <span class="dose-alert-text">💊 ${escapeHtml(medName)} is ready to take</span>
+    <button class="dose-alert-dismiss" aria-label="Dismiss">&times;</button>
+  `;
+
+  alert.querySelector('.dose-alert-dismiss').addEventListener('click', () => {
+    alert.remove();
+  });
+
+  // Also dismiss when clicking the text (to go record the dose)
+  alert.querySelector('.dose-alert-text').addEventListener('click', () => {
+    alert.remove();
+    // Scroll to the medication if visible
+    const medEl = document.querySelector(`.medication-item[data-id="${medId}"]`);
+    if (medEl) medEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+
+  document.body.appendChild(alert);
+}
+
+// Show a notification using Service Worker (required on mobile/PWA)
+async function showNotification(medName, medId, hoursSinceLast, intervalHours) {
+  // Always show in-app alert
+  showInAppAlert(medName, medId);
+
+  const options = {
+    body: `${medName} is ready to take`,
+    tag: `dose-${medId}`,
+    requireInteraction: true
+  };
+
+  try {
+    if ('serviceWorker' in navigator) {
+      const registration = await navigator.serviceWorker.ready;
+      await registration.showNotification('Dose Tracker', options);
+
+      notifiedMedIds.add(medId);
+      addLog({
+        type: 'notification',
+        action: 'sent',
+        medName: medName,
+        medId: medId,
+        hoursSinceLast: hoursSinceLast.toFixed(1),
+        intervalHours: intervalHours
+      });
+    } else {
+      notifiedMedIds.add(medId);
+      addLog({
+        type: 'notification',
+        action: 'in-app only',
+        error: 'Service Worker not supported',
+        medName: medName
+      });
+    }
+  } catch (err) {
+    notifiedMedIds.add(medId);
+    addLog({
+      type: 'notification',
+      action: 'in-app only',
+      error: err.message,
+      medName: medName
+    });
+  }
+}
+
+// Check for due medications and show notifications
+function checkAndNotify() {
+  const now = new Date();
+
+  // Log notification check status
+  const notifStatus = !notificationsSupported() ? 'not supported'
+    : Notification.permission === 'granted' ? 'enabled'
+    : Notification.permission === 'denied' ? 'denied'
+    : 'not requested';
+
+  addLog({
+    type: 'notification',
+    status: notifStatus,
+    medsCount: medications.length,
+    alreadyNotified: Array.from(notifiedMedIds)
+  });
+
+  if (!notificationsEnabled()) return;
+
+  medications.forEach(med => {
+    if (!med.dose_interval_hours || !med.last_dose_at) return;
+    if (notifiedMedIds.has(med.id)) return;
+
+    const nextDose = calculateNextDose(med.last_dose_at, med.dose_interval_hours);
+    const hoursSinceLast = (now - new Date(med.last_dose_at)) / (1000 * 60 * 60);
+    const isOnSchedule = hoursSinceLast <= med.dose_interval_hours * 2;
+    const isDue = nextDose && nextDose <= now;
+
+    if (isDue && isOnSchedule) {
+      // Show notification - try Service Worker first (required on mobile), fall back to Notification API
+      showNotification(med.name, med.id, hoursSinceLast, med.dose_interval_hours);
+    }
+  });
+}
+
 async function boot() {
   try {
+    // Register service worker for notifications (required on mobile)
+    if ('serviceWorker' in navigator) {
+      try {
+        await navigator.serviceWorker.register('/sw.js');
+      } catch (err) {
+        console.log('Service worker registration failed:', err);
+      }
+    }
+
     await init();
     currentProvider = await Views.getVisionProvider();
     await refreshMedications();
@@ -68,8 +206,12 @@ async function refreshMedications() {
 }
 
 function startCountdownTimer() {
+  // Check immediately on start
+  checkAndNotify();
+
   setInterval(() => {
     updateCountdowns();
+    checkAndNotify();
   }, 60000);
 }
 
@@ -553,6 +695,18 @@ function renderSettingsForm(body, settings) {
     <div class="settings-version">Version ${APP_VERSION}</div>
     <form id="settings-form">
       <div class="form-group">
+        <label>Notifications</label>
+        ${!notificationsSupported()
+          ? '<p class="field-hint">Notifications are not supported in this browser.</p>'
+          : Notification.permission === 'granted'
+            ? '<p class="field-hint notification-enabled">✓ Notifications enabled - you\'ll be alerted when doses are due.</p>'
+            : Notification.permission === 'denied'
+              ? '<p class="field-hint notification-denied">Notifications are blocked. Enable them in your browser settings.</p>'
+              : '<button type="button" class="btn-enable-notifications" id="btn-enable-notifications">Enable Notifications</button>'
+        }
+      </div>
+
+      <div class="form-group">
         <label for="vision-provider">Vision Provider</label>
         <select id="vision-provider">
           <option value="gemini" ${provider === 'gemini' ? 'selected' : ''}>Gemini (Google)</option>
@@ -596,7 +750,11 @@ function renderSettingsForm(body, settings) {
                 <strong>${log.type.toUpperCase()}</strong>
                 ${log.url ? `<br>URL: ${escapeHtml(log.url)}` : ''}
                 ${log.imageCount ? `<br>Images: ${log.imageCount}` : ''}
-                ${log.status ? `<br>Status: ${log.status} ${log.statusText || ''}` : ''}
+                ${log.type === 'notification' && log.status ? `<br>Permission: ${log.status}` : ''}
+                ${log.type === 'notification' && log.medsCount !== undefined ? `<br>Medications: ${log.medsCount}` : ''}
+                ${log.type === 'notification' && log.alreadyNotified ? `<br>Already notified: ${log.alreadyNotified.length > 0 ? log.alreadyNotified.join(', ') : 'none'}` : ''}
+                ${log.type === 'notification' && log.action === 'sent' ? `<br>✓ Sent notification for: ${escapeHtml(log.medName)} (${log.hoursSinceLast}h since last dose, ${log.intervalHours}h interval)` : ''}
+                ${log.type !== 'notification' && log.status ? `<br>Status: ${log.status} ${log.statusText || ''}` : ''}
                 ${log.error ? `<br>Error: ${escapeHtml(log.error)}` : ''}
                 ${log.result ? `<br>Result: ${escapeHtml(JSON.stringify(log.result))}` : ''}
                 ${log.body ? `<details><summary>Body</summary><button type="button" class="btn-copy-body" data-body="${escapeHtml(JSON.stringify(log.body))}">Copy</button><pre>${escapeHtml(JSON.stringify(log.body, null, 2))}</pre></details>` : ''}
@@ -623,6 +781,23 @@ function renderSettingsForm(body, settings) {
       claudeSettings.style.display = 'none';
     }
   });
+
+  const enableNotificationsBtn = body.querySelector('#btn-enable-notifications');
+  if (enableNotificationsBtn) {
+    enableNotificationsBtn.addEventListener('click', async () => {
+      const granted = await requestNotificationPermission();
+      if (granted) {
+        // Re-render settings to show updated status
+        renderSettingsForm(body, {
+          geminiKey: body.querySelector('#gemini-api-key').value,
+          claudeKey: body.querySelector('#claude-api-key').value,
+          provider: body.querySelector('#vision-provider').value
+        });
+        // Check immediately for any due medications
+        checkAndNotify();
+      }
+    });
+  }
 
   body.querySelector('#settings-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -727,6 +902,8 @@ function showRecordDoseModal(med, existingDose = null) {
       } else {
         await Actions.recordDose(med.id, takenAt);
       }
+      // Clear notification tracking so we can notify again for next dose
+      notifiedMedIds.delete(med.id);
       await refreshMedications();
       closeModal();
       showAddForm = false;
