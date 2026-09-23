@@ -1,0 +1,33 @@
+{
+  "title": "Dose Tracker",
+  "scripts": ["logic.js", "app.js"],
+  "stylesheets": ["style.css"],
+  "sdkVersion": 7,
+  "themeColor": "#4a90d9",
+  "migrations": [
+    "CREATE TABLE IF NOT EXISTS medications (id INTEGER PRIMARY KEY, name TEXT NOT NULL, dose_interval_hours REAL, created_at TEXT NOT NULL DEFAULT (datetime('now'))) STRICT",
+    "CREATE TABLE IF NOT EXISTS doses (id INTEGER PRIMARY KEY, medication_id INTEGER NOT NULL, taken_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now'))) STRICT",
+    "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT"
+  ],
+  "queries": {
+    "createMedication": "INSERT INTO medications (name, dose_interval_hours) VALUES (:name, :doseIntervalHours)",
+    "updateMedication": "UPDATE medications SET name = :name, dose_interval_hours = :doseIntervalHours WHERE id = :id",
+    "deleteMedication": "DELETE FROM medications WHERE id = :id",
+    "deleteDosesForMedication": "DELETE FROM doses WHERE medication_id = :medicationId",
+    "listMedications": "SELECT m.id, m.name, m.dose_interval_hours, m.created_at, (SELECT taken_at FROM doses WHERE medication_id = m.id ORDER BY taken_at DESC LIMIT 1) as last_dose_at FROM medications m ORDER BY m.name ASC",
+    "searchMedications": {
+      "sql": "SELECT m.id, m.name, m.dose_interval_hours, m.created_at, (SELECT taken_at FROM doses WHERE medication_id = m.id ORDER BY taken_at DESC LIMIT 1) as last_dose_at FROM medications m WHERE 1=1 {{filters}} ORDER BY m.name ASC",
+      "filters": {
+        "byName": "m.name LIKE :nameQuery"
+      }
+    },
+    "recordDose": "INSERT INTO doses (medication_id, taken_at) VALUES (:medicationId, :takenAt)",
+    "updateDose": "UPDATE doses SET taken_at = :takenAt WHERE id = :id",
+    "deleteDose": "DELETE FROM doses WHERE id = :id",
+    "listDoses": "SELECT id, medication_id, taken_at, created_at FROM doses WHERE medication_id = :medicationId ORDER BY taken_at DESC LIMIT 50",
+    "getMedication": "SELECT id, name, dose_interval_hours, created_at FROM medications WHERE id = :id",
+    "getSetting": "SELECT value FROM settings WHERE key = :key",
+    "setSetting": "INSERT INTO settings (key, value) VALUES (:key, :value) ON CONFLICT(key) DO UPDATE SET value = :value",
+    "deleteSetting": "DELETE FROM settings WHERE key = :key"
+  }
+}
