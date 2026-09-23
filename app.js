@@ -1,7 +1,7 @@
 // Dose Tracker - UI
 import { init, Views, Actions, calculateNextDose, formatTimeUntil, formatDateTime, extractMedicationFromImage, isMobileDevice, getDebugLog, clearDebugLog } from './logic.js';
 
-const APP_VERSION = '21';
+const APP_VERSION = '23';
 
 let currentProvider = 'gemini'; // Will be loaded from settings
 
@@ -12,6 +12,38 @@ let showAddForm = false;
 let isProcessingImage = false;
 let pendingImages = []; // Queue of { base64, mimeType, name } for staged upload
 let highlightedMedId = null; // ID of medication to highlight after adding
+
+// Sort medications: on-schedule meds by next dose time, then off-schedule alphabetically
+function sortMedications() {
+  const now = new Date();
+
+  // Check if medication is on a regular schedule (taken within 200% of interval)
+  function isOnSchedule(med) {
+    if (!med.dose_interval_hours || !med.last_dose_at) return false;
+    const lastDose = new Date(med.last_dose_at);
+    const hoursSince = (now - lastDose) / (1000 * 60 * 60);
+    return hoursSince <= med.dose_interval_hours * 2;
+  }
+
+  medications.sort((a, b) => {
+    const aOnSchedule = isOnSchedule(a);
+    const bOnSchedule = isOnSchedule(b);
+
+    // On-schedule medications come first
+    if (aOnSchedule && !bOnSchedule) return -1;
+    if (!aOnSchedule && bOnSchedule) return 1;
+
+    // Both on schedule: sort by next dose time (earliest first)
+    if (aOnSchedule && bOnSchedule) {
+      const aNext = calculateNextDose(a.last_dose_at, a.dose_interval_hours);
+      const bNext = calculateNextDose(b.last_dose_at, b.dose_interval_hours);
+      return aNext - bNext;
+    }
+
+    // Both off schedule: sort alphabetically
+    return a.name.localeCompare(b.name);
+  });
+}
 
 async function boot() {
   try {
@@ -32,6 +64,7 @@ async function refreshMedications() {
   } else {
     medications = await Views.listMedications();
   }
+  sortMedications();
 }
 
 function startCountdownTimer() {
@@ -169,8 +202,19 @@ function updateMedicationListOnly() {
 function renderMedication(med) {
   const nextDose = calculateNextDose(med.last_dose_at, med.dose_interval_hours);
   const nextDoseText = formatTimeUntil(nextDose);
-  const isAvailable = nextDose ? nextDose <= new Date() : true;
+  const now = new Date();
+  const isAvailable = nextDose ? nextDose <= now : true;
   const isHighlighted = med.id === highlightedMedId;
+
+  // Calculate hours overdue for on-schedule medications
+  let hoursOverdue = 0;
+  if (med.dose_interval_hours && med.last_dose_at && nextDose && nextDose < now) {
+    const hoursSinceLast = (now - new Date(med.last_dose_at)) / (1000 * 60 * 60);
+    // Only show overdue if medication is on schedule (taken within 200% of interval)
+    if (hoursSinceLast <= med.dose_interval_hours * 2) {
+      hoursOverdue = Math.round((now - nextDose) / (1000 * 60 * 60));
+    }
+  }
 
   return `
     <li class="medication-item${isHighlighted ? ' highlight-new' : ''}" data-id="${med.id}">
@@ -194,6 +238,7 @@ function renderMedication(med) {
                 <span class="next-dose ${isAvailable ? 'available' : 'waiting'}" data-countdown-id="${med.id}">
                   ${nextDoseText || 'Take first dose'}
                 </span>
+                ${hoursOverdue > 0 ? `<span class="overdue">${hoursOverdue}h overdue</span>` : ''}
               </div>
             ` : ''}
           </div>
@@ -350,7 +395,7 @@ async function handleScanAllImages() {
       created_at: new Date().toISOString(),
       last_dose_at: null
     });
-    medications.sort((a, b) => a.name.localeCompare(b.name));
+    sortMedications();
 
     // Clear pending images on success
     pendingImages = [];
@@ -402,7 +447,7 @@ async function handleAddMedication(e) {
       created_at: new Date().toISOString(),
       last_dose_at: null
     });
-    medications.sort((a, b) => a.name.localeCompare(b.name));
+    sortMedications();
     nameInput.value = '';
     intervalInput.value = '';
     showAddForm = true;
@@ -806,7 +851,7 @@ function showEditMedicationModal(med) {
         medications[idx].name = newName;
         medications[idx].dose_interval_hours = newInterval;
       }
-      medications.sort((a, b) => a.name.localeCompare(b.name));
+      sortMedications();
       closeModal();
       showAddForm = false;
       render();
