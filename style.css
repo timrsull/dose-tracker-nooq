@@ -385,6 +385,26 @@ h2 {
   }
 }
 
+.medication-item.highlight-dosed {
+  animation: highlight-dosed-pulse 2s ease-out forwards;
+}
+
+@keyframes highlight-dosed-pulse {
+  0% {
+    background-color: #e3f2fd;
+    transform: scale(1.02);
+    box-shadow: 0 2px 8px rgba(74, 144, 217, 0.3);
+  }
+  50% {
+    background-color: #bbdefb;
+  }
+  100% {
+    background-color: transparent;
+    transform: scale(1);
+    box-shadow: none;
+  }
+}
+
 .medication-item:last-child {
   border-bottom: none;
 }

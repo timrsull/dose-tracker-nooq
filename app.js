@@ -1,7 +1,7 @@
 // Dose Tracker - UI
 import { init, Views, Actions, calculateNextDose, formatTimeUntil, formatDateTime, extractMedicationFromImage, isMobileDevice, getDebugLog, clearDebugLog, addLog } from './logic.js';
 
-const APP_VERSION = '27';
+const APP_VERSION = '29';
 
 let currentProvider = 'gemini'; // Will be loaded from settings
 
@@ -12,7 +12,9 @@ let showAddForm = false;
 let isProcessingImage = false;
 let pendingImages = []; // Queue of { base64, mimeType, name } for staged upload
 let highlightedMedId = null; // ID of medication to highlight after adding
+let dosedMedId = null; // ID of medication that just had a dose recorded
 let notifiedMedIds = new Set(); // Track which meds we've already notified about
+let pendingListAnimation = false; // Flag to trigger FLIP animation after render
 
 // Sort medications: on-schedule meds by next dose time, then off-schedule alphabetically
 function sortMedications() {
@@ -171,6 +173,52 @@ function checkAndNotify() {
       // Show notification - try Service Worker first (required on mobile), fall back to Notification API
       showNotification(med.name, med.id, hoursSinceLast, med.dose_interval_hours);
     }
+  });
+}
+
+// FLIP Animation: Capture positions before re-render
+function captureListPositions() {
+  const positions = new Map();
+  document.querySelectorAll('.medication-item').forEach(el => {
+    const id = el.dataset.id;
+    const rect = el.getBoundingClientRect();
+    positions.set(id, { top: rect.top, left: rect.left });
+  });
+  return positions;
+}
+
+// FLIP Animation: Animate items from old positions to new positions
+function animateListReorder(oldPositions) {
+  const items = document.querySelectorAll('.medication-item');
+
+  items.forEach(el => {
+    const id = el.dataset.id;
+    const oldPos = oldPositions.get(id);
+    if (!oldPos) return; // New item, no animation needed
+
+    const newRect = el.getBoundingClientRect();
+    const deltaY = oldPos.top - newRect.top;
+    const deltaX = oldPos.left - newRect.left;
+
+    // Skip if position hasn't changed much
+    if (Math.abs(deltaY) < 2 && Math.abs(deltaX) < 2) return;
+
+    // Apply the inverse transform (move to old position)
+    el.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+    el.style.transition = 'none';
+
+    // Force reflow
+    el.offsetHeight;
+
+    // Animate back to new position
+    el.style.transition = 'transform 0.4s ease-out';
+    el.style.transform = '';
+
+    // Clean up after animation
+    el.addEventListener('transitionend', function handler() {
+      el.style.transition = '';
+      el.removeEventListener('transitionend', handler);
+    });
   });
 }
 
@@ -347,6 +395,7 @@ function renderMedication(med) {
   const now = new Date();
   const isAvailable = nextDose ? nextDose <= now : true;
   const isHighlighted = med.id === highlightedMedId;
+  const justDosed = med.id === dosedMedId;
 
   // Calculate hours overdue for on-schedule medications
   let hoursOverdue = 0;
@@ -359,7 +408,7 @@ function renderMedication(med) {
   }
 
   return `
-    <li class="medication-item${isHighlighted ? ' highlight-new' : ''}" data-id="${med.id}">
+    <li class="medication-item${isHighlighted ? ' highlight-new' : ''}${justDosed ? ' highlight-dosed' : ''}" data-id="${med.id}">
       <div class="med-row">
         <div class="med-main">
           <div class="med-info">
@@ -904,10 +953,29 @@ function showRecordDoseModal(med, existingDose = null) {
       }
       // Clear notification tracking so we can notify again for next dose
       notifiedMedIds.delete(med.id);
+      // Remove any in-app alert for this medication
+      const alertEl = document.querySelector(`.dose-alert[data-med-id="${med.id}"]`);
+      if (alertEl) alertEl.remove();
+
+      // Capture positions before refresh for FLIP animation
+      const oldPositions = captureListPositions();
+
       await refreshMedications();
       closeModal();
       showAddForm = false;
+      // Highlight the medication that was just dosed
+      dosedMedId = med.id;
       render();
+
+      // Animate the list reordering
+      requestAnimationFrame(() => {
+        animateListReorder(oldPositions);
+      });
+
+      // Clear highlight after animation
+      setTimeout(() => {
+        dosedMedId = null;
+      }, 2000);
     } catch (err) {
       alert('Error saving dose: ' + err.message);
     }
