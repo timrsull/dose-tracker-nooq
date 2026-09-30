@@ -1,7 +1,7 @@
 // Dose Tracker - UI
 import { init, Views, Actions, calculateNextDose, formatTimeUntil, formatDateTime, extractMedicationFromImage, isMobileDevice, getDebugLog, clearDebugLog, addLog } from './logic.js';
 
-const APP_VERSION = '29';
+const APP_VERSION = '30';
 
 let currentProvider = 'gemini'; // Will be loaded from settings
 
@@ -25,7 +25,9 @@ function sortMedications() {
     if (!med.dose_interval_hours || !med.last_dose_at) return false;
     const lastDose = new Date(med.last_dose_at);
     const hoursSince = (now - lastDose) / (1000 * 60 * 60);
-    return hoursSince <= med.dose_interval_hours * 2;
+    // Use 200% of interval or 24 hours, whichever is greater
+    const scheduleWindow = Math.max(med.dose_interval_hours * 2, 24);
+    return hoursSince <= scheduleWindow;
   }
 
   medications.sort((a, b) => {
@@ -166,7 +168,8 @@ function checkAndNotify() {
 
     const nextDose = calculateNextDose(med.last_dose_at, med.dose_interval_hours);
     const hoursSinceLast = (now - new Date(med.last_dose_at)) / (1000 * 60 * 60);
-    const isOnSchedule = hoursSinceLast <= med.dose_interval_hours * 2;
+    const scheduleWindow = Math.max(med.dose_interval_hours * 2, 24);
+    const isOnSchedule = hoursSinceLast <= scheduleWindow;
     const isDue = nextDose && nextDose <= now;
 
     if (isDue && isOnSchedule) {
@@ -402,7 +405,8 @@ function renderMedication(med) {
   if (med.dose_interval_hours && med.last_dose_at && nextDose && nextDose < now) {
     const hoursSinceLast = (now - new Date(med.last_dose_at)) / (1000 * 60 * 60);
     // Only show overdue if medication is on schedule (taken within 200% of interval)
-    if (hoursSinceLast <= med.dose_interval_hours * 2) {
+    const scheduleWindow = Math.max(med.dose_interval_hours * 2, 24);
+    if (hoursSinceLast <= scheduleWindow) {
       hoursOverdue = Math.round((now - nextDose) / (1000 * 60 * 60));
     }
   }
